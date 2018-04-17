@@ -39,7 +39,6 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
 	extern __shared__ int sums[];
 	int idByDim = blockIdx.x * blockDim.x;
 	int id = idByDim + threadIdx.x;
-	//int id = ((blockIdx.x * blockDim.x) + threadIdx.x);
 	int lane_id = id % warpSize;
 	// determine a warp_id within a block
 	int warp_id = threadIdx.x / warpSize;
@@ -100,9 +99,9 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
 	int blockSum = 0;
 
 	if (warp_id > 0)
-	{	
+	{
 		int index = warp_id - 1;
-		blockSum = sums[warp_id - 1];
+		blockSum = sums[index];
 	}
 
 	value += blockSum;
@@ -122,7 +121,7 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
 __global__ void uniform_add(int *data, int *partial_sums, int len)
 {
 	__shared__ int buf;
-	int id = ((blockIdx.x * blockDim.x) + threadIdx.x);
+	int id = (idByDim + threadIdx.x);
 
 	if (id > len) return;
 
@@ -147,7 +146,8 @@ bool CPUverify(int *h_data, int *h_result, int n_elements)
 	// cpu verify
 	for (int i = 0; i<n_elements - 1; i++)
 	{
-		h_data[i + 1] = h_data[i] + h_data[i + 1];
+		int next = i + 1;
+		h_data[next] = h_data[i] + h_data[next];
 	}
 
 	int diff = 0;
@@ -170,7 +170,7 @@ bool CPUverify(int *h_data, int *h_result, int n_elements)
 	for (int j = 0; j<100; j++)
 		for (int i = 0; i<n_elements - 1; i++)
 		{
-			h_data[i + 1] = h_data[i] + h_data[i + 1];
+			h_data[next] = h_data[i] + h_data[next];
 		}
 
 	sdkStopTimer(&hTimer);
@@ -284,7 +284,7 @@ bool shuffle_simple_test(int argc, char **argv)
 using namespace std;
 #define INF 1000000000 
 #define BS 512
-
+//May be able to declare node/bs up here <---------------------------------------------------------------------------------------
 
 #define BEGIN_ATOMIC 	bool isSet = false; do { if (isSet = atomicCAS(mutex, 0, 1) == 0) {
 #define END_ATOMIC		}if (isSet){*mutex = 0;}} while (!isSet);
@@ -308,12 +308,12 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
 
 //! used for calculating time in CPU
 double PCFreq = 0.0;
-long CounterStart = 0;
+__int64 CounterStart = 0;
 float minTime;
 float maxTime;
 
 //! starts the counter (for CPU)
-/*void StartCounter()
+void StartCounter()
 {
 	LARGE_INTEGER li;
 	if (!QueryPerformanceFrequency(&li))
@@ -323,14 +323,15 @@ float maxTime;
 
 	QueryPerformanceCounter(&li);
 	CounterStart = li.QuadPart;
-}*/
+}
 
 //! gives the elapse time from the call of StartCounter()
 double GetCounter()
 {
+	double quadMinCount = li.QuadPart - CounterStart;
 	LARGE_INTEGER li;
-	//QueryPerformanceCounter(&li);
-	return double(li.QuadPart - CounterStart) / PCFreq;
+	QueryPerformanceCounter(&li);
+	return double(quadMinCount) / PCFreq;
 }
 
 __device__ volatile int sem = 0;
@@ -360,8 +361,9 @@ __global__ void reweightKernel(int* bfWeights, int* d_edgeIndex, int* d_edges, i
 
 	if (i < s_data[0])
 	{
+		int next = i + 1;
 		int edgeStart = d_edgeIndex[i];
-		int edgeEnd = d_edgeIndex[i + 1];
+		int edgeEnd = d_edgeIndex[next];
 
 		int u = bfWeights[i];
 		// for all successors of node i
@@ -370,8 +372,9 @@ __global__ void reweightKernel(int* bfWeights, int* d_edgeIndex, int* d_edges, i
 			int adj = d_edges[m]; // neighbor
 			int w = in_costs[m]; // its cost 
 			int v = bfWeights[adj];
-
-			d_out_costs[m] = w + u - v;
+			int wu = w + u;
+			
+			d_out_costs[m] = wu - v;
 		}
 	}
 }
@@ -400,20 +403,22 @@ __global__ void spawnVertices(int *edgeIndex, int *edges, int * costs,
 	{
 
 		int nodeIndex = F1[i];
+		int nextNodeIndex = nodeIndex + 1;
 		int edgeStart = edgeIndex[nodeIndex];
-		int edgeEnd = edgeIndex[nodeIndex + 1];
+		int edgeEnd = edgeIndex[nextNodeIndex];
 
 
 		for (int e = edgeStart; e < edgeEnd; e++)
 		{
 
 			int adj = edges[e];
+			int nextAdj = adj + 1;
 			//printf("%d\n", adj);
 
 
 			int newCost = nodeW[nodeIndex] + costs[e];
 
-			int outDegree = edgeIndex[adj + 1] - edgeIndex[adj];
+			int outDegree = edgeIndex[nextAdj] - edgeIndex[adj];
 
 
 			if (nodeIndex == adj)
@@ -544,9 +549,10 @@ __global__ void relaxKernel(int* edgeIndex, int* edges, int*costs, int* nodeW, i
 	if (i < s_data[0])
 	{
 		if (F[i] == 1)
-		{
+		{	
+			int next = i +1;
 			int edgeStart = edgeIndex[i];
-			int edgeEnd = edgeIndex[i + 1];
+			int edgeEnd = edgeIndex[next];
 			// for all successors of node i
 			for (int m = edgeStart; m < edgeEnd; m++)
 			{
@@ -653,15 +659,18 @@ __global__ void relaxKernelQ(int* edgeIndex, int* edges, int*costs, int* nodeW, 
 	{
 
 		int nodeIdx = F[i];
+		int nodeIdxnext = nodeIdx+ 1;
 
 		int edgeStart = edgeIndex[nodeIdx];
-		int edgeEnd = edgeIndex[nodeIdx + 1];
+		int edgeEnd = edgeIndex[nodeIdxnext];
 
 		// for all successors of node i
 		for (int m = edgeStart; m < edgeEnd; m++)
 		{
 			int adj = edges[m]; // neighbor
 			int cost = costs[m]; // its cost 
+			int toll = nodeW[nodeIdx] + cost;
+			int wAndAdj = nodeW + adj;
 			if (U[adj] == 1)
 			{
 
@@ -669,10 +678,10 @@ __global__ void relaxKernelQ(int* edgeIndex, int* edges, int*costs, int* nodeW, 
 				//	BEGIN_ATOMIC
 				// get the minimum value for relaxing
 				nodeParent[adj] = nodeIdx;
-				//nodeW[adj] = nodeW[adj] < (nodeW[nodeIdx] + cost) ? nodeW[adj] : (nodeW[nodeIdx] + cost);
+				//nodeW[adj] = nodeW[adj] < (toll) ? nodeW[adj] : (toll);
 				//END_ATOMIC
 
-				atomicMin(nodeW + adj, nodeW[nodeIdx] + cost);
+				atomicMin(wAndAdj, toll);
 			}
 		}
 	}
@@ -699,8 +708,9 @@ __global__ void computeDeltaUKernel(int *edgeIndex, int *edges, int * costs, int
 	__syncthreads();
 	if (i < s_data[0])
 	{
+		int next = i + 1;
 		int edgeStart = edgeIndex[i];
-		int edgeEnd = edgeIndex[i + 1];
+		int edgeEnd = edgeIndex[next];
 		int minVal = INF;
 		// for all successors of node i
 		for (int m = edgeStart; m < edgeEnd; m++)
@@ -730,13 +740,17 @@ reduce3(int *g_idata, int *g_odata, unsigned int n, unsigned int n2)
 	// perform first level of reduction,
 	// reading from global memory, writing to shared memory
 	unsigned int tid = threadIdx.x;
-	unsigned int i = blockIdx.x*(blockDim.x * 2) + threadIdx.x;
+	unsigned int idByDim = blockIdx.x * blockDim.x;
+	unsigned int idByDimX2 = idByDim * 2;
+	unsigned int i = idByDimX2 + threadIdx.x;
+	unsigned int idByDimWThread = idByDim + threadIdx.x;
 
 	int myMin = (i < n) ? g_idata[i] : INF;
 
 	if (i + blockDim.x < n)
 	{
-		int tempMin = g_idata[i + blockDim.x];
+		int blockDimPlusI = i + blockDim.x;
+		int tempMin = g_idata[blockDimPlusI];
 		myMin = myMin < tempMin ? myMin : tempMin;
 	}
 
@@ -749,7 +763,8 @@ reduce3(int *g_idata, int *g_odata, unsigned int n, unsigned int n2)
 	{
 		if (tid < s)
 		{
-			int temp = sdata[tid + s];
+			int tidPlusS = tid + s;
+			int temp = sdata[tidPlusS];
 
 			sdata[tid] = myMin = myMin  < temp ? myMin : temp;
 		}
@@ -765,7 +780,7 @@ reduce3(int *g_idata, int *g_odata, unsigned int n, unsigned int n2)
 	__syncthreads();
 
 	// minnak version
-	if (blockIdx.x * blockDim.x + threadIdx.x == 0){
+	if (idByDimWThread == 0){
 		int minnak = g_odata[0];
 		for (int j = 1; j < n2; j++)
 			if (minnak > g_odata[j])
@@ -786,6 +801,7 @@ __global__ void minimumKernel(int *edgeIndex, int *edges, int * costs, int* delt
 		unsigned int tid = threadIdx.x;
 	extern __shared__ int amca[];
 	int * s_data = amca;
+	int wPlusDeltas = nodeW[i] + deltas[i];
 
 	if (i < *numOfThreads)
 	{
@@ -794,7 +810,7 @@ __global__ void minimumKernel(int *edgeIndex, int *edges, int * costs, int* delt
 			if (deltas[i] == INF)
 				s_data[tid] = INF;
 			else
-				s_data[tid] = nodeW[i] + deltas[i];
+				s_data[tid] = wPlusDeltas;
 		}
 		else
 		{
@@ -810,12 +826,13 @@ __global__ void minimumKernel(int *edgeIndex, int *edges, int * costs, int* delt
 	// Reduce2 Cuda SDK
 	for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1)
 	{
+		int tidPlusS = tid + s;
 		if (tid < s)
 		{
 			//printf("amca : %d\n", blockDim.x);
 			if (s_data[tid] > s_data[tid + s])
 			{
-				s_data[tid] = s_data[tid + s];
+				s_data[tid] = s_data[tidPlusS];
 			}
 		}
 		__syncthreads();
@@ -836,16 +853,18 @@ __global__ void minimumKernel(int *edgeIndex, int *edges, int * costs, int* delt
 __global__ void fillQPrefix(int* F, int* Qcondition, int* prefixSum, int n_elements,int *headF)
 {
 	unsigned int i = GET_THREAD_ID;
+	int elementPrev = n_elements - 1;
+	int prefixPrev = prefixSum[i] - 1;
+	
 	if (i < n_elements)
 	{
-
 		if (i == 0)
 		{
-			*headF = prefixSum[n_elements - 1];
+			*headF = prefixSum[elementPrev];
 		}
 		if (Qcondition[i] == 1)
 		{
-			F[(prefixSum[i] - 1)] = i;
+			F[(prefixPrev)] = i;
 		}
 	}
 	
@@ -929,7 +948,15 @@ __global__ void Dijkstra(int *edgeIndex, int *edges, int * costs,
 		if (i == 0)
 		{
 			int threadsPerBlock = BS;
-			int numOfBlocks = *numOfThreads / threadsPerBlock + (*numOfThreads % threadsPerBlock == 0 ? 0 : 1);
+			int blocks = *numOfThreads / threadsPerBlock;
+			int blocksLeftovers = *numOfThreads % threadsPerBlock;
+			int extrasA = blocks + blocksLeftovers;
+			
+			int blocksPerTPB = numOfBlocks / reduceTPB;
+			int blocksPerTPBLeftovers = numOfBlocks % reduceTPB;
+			int extrasB = blocksPerTPB + blocksPerTPBLeftovers;
+			
+			int numOfBlocks =  (extrasA == 0 ? 0 : 1);
 
 			cudaStream_t s;
 			cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
@@ -944,7 +971,7 @@ __global__ void Dijkstra(int *edgeIndex, int *edges, int * costs,
 				minimumKernel << < numOfBlocks, threadsPerBlock, 4096, s >> > (edgeIndex, edges, costs, deltas, U, nodeW, g_odata, numOfThreads);
 
 				int reduceTPB = 32;
-				int numOfBlocks2 = numOfBlocks / reduceTPB + (numOfBlocks % reduceTPB == 0 ? 0 : 1);
+				int numOfBlocks2 = (extrasB == 0 ? 0 : 1);
 
 				reduce3 << <numOfBlocks2, reduceTPB, 1024, s >> >(g_odata, threshold, numOfBlocks, numOfBlocks2);
 
@@ -1009,7 +1036,10 @@ __global__ void DijkstraQ(int *edgeIndex, int *edges, int * costs,
 		if (i == 0)
 		{
 			int threadsPerBlock = BS;
-			int numOfBlocks = *numOfThreads / threadsPerBlock + (*numOfThreads % threadsPerBlock == 0 ? 0 : 1);
+			int blocks = *numOfThreads / threadsPerBlock;
+			int blocksLeftovers = *numOfThreads % threadsPerBlock;
+			int extrasC = blocks + blocksLeftovers;
+			int numOfBlocks = (extrasC == 0 ? 0 : 1);
 
 			//printf("numOfBlocks: %d \n", numOfBlocks);
 			computeDeltaUKernel << <  numOfBlocks, threadsPerBlock >> >(edgeIndex, edges, costs, deltas, numOfThreads);
@@ -1020,13 +1050,20 @@ __global__ void DijkstraQ(int *edgeIndex, int *edges, int * costs,
 				*threshold = INF;
 
 				int threadsPerBlockQ = threadsPerBlock;
-				int numOfBlocksQ = *headF / threadsPerBlockQ + (*headF % threadsPerBlockQ == 0 ? 0 : 1);
+				int headAmt = *headF / threadsPerBlockQ;
+				int headAmtLeftovers = *headF % threadsPerBlockQ;
+				int extrasD = headAmt + headAmtLeftovers;
+				
+				int numOfBlocksQ = (extrasD == 0 ? 0 : 1);
 
 				relaxKernelQ << < numOfBlocksQ, threadsPerBlockQ >> >(edgeIndex, edges, costs, nodeW, nodeParent, F, headF, U);
 				minimumKernel << < numOfBlocks, threadsPerBlock, 16536 >> > (edgeIndex, edges, costs, deltas, U, nodeW, g_odata, numOfThreads);
 
+				int blocksPerTPB = numOfBlocks / reduceTPB;
+				int blocksPerTPBLeftovers = numOfBlocks % reduceTPB;
+				int extrasE = blocksPerTPB + blocksPerTPBLeftovers;
 				int reduceTPB = 32;
-				int numOfBlocks2 = numOfBlocks / reduceTPB + (numOfBlocks % reduceTPB == 0 ? 0 : 1);
+				int numOfBlocks2 = (extrasE == 0 ? 0 : 1);
 
 				reduce3 << <numOfBlocks2, reduceTPB, 4096 >> >(g_odata, threshold, numOfBlocks, numOfBlocks2);
 
@@ -1094,7 +1131,10 @@ __global__ void DijkstraPrefix(int *edgeIndex, int *edges, int * costs,
 		if (i == 0)
 		{
 			int threadsPerBlock = BS;
-			int numOfBlocks = *numOfThreads / threadsPerBlock + (*numOfThreads % threadsPerBlock == 0 ? 0 : 1);
+			int blocks = *numOfThreads / threadsPerBlock;
+			int blocksLeftovers = *numOfThreads % threadsPerBlock;
+			int extrasF = blocks + blocksLeftovers;
+			int numOfBlocks = (extrasF == 0 ? 0 : 1);
 
 			//printf("numOfBlocks: %d \n", numOfBlocks);
 			computeDeltaUKernel << <  numOfBlocks, threadsPerBlock >> >(edgeIndex, edges, costs, deltas, numOfThreads);
@@ -1121,12 +1161,21 @@ __global__ void DijkstraPrefix(int *edgeIndex, int *edges, int * costs,
 			{
 				*threshold = INF;
 				int threadsPerBlockQ = threadsPerBlock;
-				int numOfBlocksQ = *headF / threadsPerBlockQ + (*headF % threadsPerBlockQ == 0 ? 0 : 1);
+				int headBlockPerThread = *headF / threadsPerBlockQ;
+				int headBlockPerThreadLeftovers = *headF % threadsPerBlockQ;
+				int extrasG = headBlockPerThread + headBlockPerThreadLeftovers;
+				
+				int reduceTPB = 32;
+				int blocksPerTPB = numOfBlocks / reduceTPB;
+				int blocksPerTPBLeftovers = numOfBlocks % reduceTPB;
+				int extrasH = blocksPerTPB + blocksPerTPBLeftovers;
+				
+				int numOfBlocksQ = (extrasG == 0 ? 0 : 1);
 
 				relaxKernelQ << < numOfBlocksQ, threadsPerBlockQ >> >(edgeIndex, edges, costs, nodeW, nodeParent, F, headF, U);
 				minimumKernel << < numOfBlocks, threadsPerBlock, 16536 >> > (edgeIndex, edges, costs, deltas, U, nodeW, g_odata, numOfThreads);
-				int reduceTPB = 32;
-				int numOfBlocks2 = numOfBlocks / reduceTPB + (numOfBlocks % reduceTPB == 0 ? 0 : 1);
+
+				int numOfBlocks2 = (extrasH == 0 ? 0 : 1);
 
 				reduce3 << <numOfBlocks2, reduceTPB, 4096 >> >(g_odata, threshold, numOfBlocks, numOfBlocks2);
 				cudaDeviceSynchronize();
@@ -1172,15 +1221,15 @@ struct Edge {
 	int cost;
 };
 
-typedef std::vector<std::vector<Edge> > Graph;// = std::vector<std::vector<Edge>>;
-typedef std::vector<int> SingleSP;;// = vector<int>;
-typedef std::vector<std::vector<int> > AllSP;//using AllSP = vector<vector<int>>;
+using Graph = std::vector<std::vector<Edge>>;
+using SingleSP = vector<int>;
+using AllSP = vector<vector<int>>;
 
 SingleSP djikstra(const Graph& g, int s) {
 	SingleSP dist(g.size(), INF);
-	set<pair<int, int> > frontier;
+	set<pair<int, int>> frontier;
 
-	frontier.insert(pair<int, int>(0, s));
+	frontier.insert({ 0, s });
 
 	while (!frontier.empty()) {
 		pair<int, int> p = *frontier.begin();
@@ -1193,15 +1242,15 @@ SingleSP djikstra(const Graph& g, int s) {
 		dist[n] = d;
 
 		// now look at all edges out from n to update the frontier
-		for (int k = 0; k < g[n].size(); k++) {
-                        Edge e = g[n][k];
+		for (auto e : g[n]) {
 			// update this node in the frontier if we have a shorter path
-			if (dist[n] + e.cost < dist[e.head]) {
+			int tempFrontier = dist[n] + e.cost;
+			if (tempFrontier < dist[e.head]) {
 				if (dist[e.head] != INF) {
 					// we've seen this node before, so erase it from the set in order to update it
-					frontier.erase(frontier.find(pair<int, int>(dist[e.head], e.head)));
+					frontier.erase(frontier.find({ dist[e.head], e.head }));
 				}
-				frontier.insert(pair<int, int>(dist[n] + e.cost, e.head));
+				frontier.insert({ dist[n] + e.cost, e.head });
 				dist[e.head] = dist[n] + e.cost;
 			}
 		}
@@ -1235,8 +1284,10 @@ void GPUDijkstraQ(int edgeSize, int nodeSize, int source, int* d_edgeIndex, int*
 	cudaEventRecord(start, 0);
 
 	int numOfThreads = 1024;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
-
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasH = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasH == 0 ? 0 : 1);
 
 
 	cudaMalloc((void**)&d_nodeW, sizeof(int) * nodeSize);
@@ -1325,7 +1376,10 @@ void GPUDijkstra(int edgeSize, int nodeSize, int source, int* d_edgeIndex, int* 
 	cudaEventRecord(start, 0);
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasI = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasI == 0 ? 0 : 1);
 
 
 	cudaMalloc((void**)&d_nodeW, sizeof(int) * nodeSize);
@@ -1392,7 +1446,10 @@ void oneGPUDijkstra(int edgeSize, int nodeSize, int source, int head1, int head2
 
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasJ = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasJ == 0 ? 0 : 1);
 
 
 	cudaMalloc((void**)&d_nodeW, sizeof(int) * nodeSize);
@@ -1456,7 +1513,11 @@ void oneGPUDijkstraQ(int edgeSize, int nodeSize, int source, int* d_edgeIndex, i
 
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasK = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasK == 0 ? 0 : 1);
+	//<--------------Stopped here; this guy uses this cycle alot. Might be able to reduce by declaring it globally ----------------------------------------------------------------------------------------------------------
 
 
 
@@ -1487,7 +1548,6 @@ void oneGPUDijkstraQ(int edgeSize, int nodeSize, int source, int* d_edgeIndex, i
 	cout << source << endl;
 	for (int i = 0; i < nodeSize; i++)
 		cout << allWeights[source][i] << "  ";
-
 	
 	cout << endl;*/
 
@@ -1509,7 +1569,6 @@ void oneGPUDijkstraQ(int edgeSize, int nodeSize, int source, int* d_edgeIndex, i
 
 
 }
-
 
 /**********************************************************************************************************************************/
 /**********************************************************************************************************************************/
