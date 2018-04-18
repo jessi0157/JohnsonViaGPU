@@ -1595,7 +1595,10 @@ void oneGPUDijkstraQVerify(int edgeSize, int nodeSize, int source, int* d_edgeIn
 
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasL = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasL == 0 ? 0 : 1);
 
 
 
@@ -1675,7 +1678,10 @@ void oneGPUDijkstraPrefix(int edgeSize, int nodeSize, int source, int* d_edgeInd
 	int* d_Qcondition = 0;
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasM = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasM == 0 ? 0 : 1);
 
 
 
@@ -1693,7 +1699,7 @@ void oneGPUDijkstraPrefix(int edgeSize, int nodeSize, int source, int* d_edgeInd
 
 
 
-	int n_partialSums = nodeSize / BS + (nodeSize % BS == 0 ? 0 : 1);
+	int n_partialSums = (extrasM == 0 ? 0 : 1);	//<-------------------------- USED BS but i think its fine; take caution 
 	cudaMalloc((void**)&d_partialSums, sizeof(int) * n_partialSums);
 
 
@@ -1758,7 +1764,10 @@ void oneGPUDijkstraPrefixVerify(int edgeSize, int nodeSize, int source, int* d_e
 	int* d_Qcondition = 0;
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasN = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasN == 0 ? 0 : 1);
 
 
 	
@@ -1776,7 +1785,7 @@ void oneGPUDijkstraPrefixVerify(int edgeSize, int nodeSize, int source, int* d_e
 	
 
 
-	int n_partialSums = nodeSize / BS + (nodeSize % BS == 0 ? 0 : 1);
+	int n_partialSums = (extrasN == 0 ? 0 : 1);	//<-------- same as above comment
 	cudaMalloc((void**)&d_partialSums, sizeof(int) * n_partialSums);
 
 
@@ -1870,7 +1879,10 @@ void Johnson1(int* outW, int* edgeIndex, int* edges, int* costs, int nodeSize, i
 	cudaMemcpy(d_numOfThreads, &nodeSize, sizeof(int), cudaMemcpyHostToDevice);
 
 	int numOfThreads = BS;
-	int numOfBlocks = nodeSize / numOfThreads + (nodeSize%numOfThreads == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasN = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasN == 0 ? 0 : 1);
 
 	BF << <numOfBlocks, numOfThreads >> >(d_edgeIndex, d_edges, d_costs, d_nodeW, d_nodeParent, d_itNo, d_source, F1, F2, d_head1, d_head2, d_mutex, d_numOfThreads);
 
@@ -1988,9 +2000,10 @@ printf("IN MAIN");
 
         cout << "ALLOCATING MEMORY...." << endl;
 	int* edgeIndex, *edges, *costs;
+	int sizeBoth = edgeSize + nodeSize;
 	cudaMallocHost((void**)&edgeIndex, (nodeSize + 2)*sizeof(int));
-	cudaMallocHost((void**)&edges, (edgeSize + nodeSize)*sizeof(int));
-	cudaMallocHost((void**)&costs, (edgeSize + nodeSize)*sizeof(int));
+	cudaMallocHost((void**)&edges, sizeBoth * sizeof(int));
+	cudaMallocHost((void**)&costs, sizeBoth*sizeof(int));
 
 
 	int* nodeW = new int[nodeSize];
@@ -2047,9 +2060,9 @@ printf("IN MAIN");
 		int end = offset + edgesVector[i].size();
 
 		for (int j = offset; j < end; j++){
-
-			edges[j] = edgesVector[i][j - offset];
-			costs[j] = costsVector[i][j - offset];
+			int diff = j - offset;	
+			edges[j] = edgesVector[i][diff];
+			costs[j] = costsVector[i][diff];
 
 		}
 
@@ -2062,9 +2075,9 @@ printf("IN MAIN");
 
 
 	for (int i = edgeSize; i < edgeSize + nodeSize; i++){
-
-		edges[i] = edgesVector[nodeSize][i - edgeSize];
-		costs[i] = costsVector[nodeSize][i - edgeSize];
+		int difference = i - edgeSize;
+		edges[i] = edgesVector[nodeSize][difference];
+		costs[i] = costsVector[nodeSize][difference];
 
 
 	}
@@ -2079,9 +2092,9 @@ printf("IN MAIN");
 		int* amca = new int[nodeSize + 1];
 		allWeights.push_back(amca);
 	}
-
+	int nextNode = nodeSize + 1;
 	int* d_edgeIndex, *d_edges, *d_costs;
-	cudaMalloc((void**)&d_edgeIndex, sizeof(int) * (nodeSize + 1));
+	cudaMalloc((void**)&d_edgeIndex, sizeof(int) * nextNode);
 	cudaMalloc((void**)&d_edges, sizeof(int) * edgeSize);
 	cudaMalloc((void**)&d_costs, sizeof(int) * edgeSize);
 
@@ -2116,7 +2129,10 @@ printf("IN MAIN");
 
 	cudaDeviceSynchronize();
 	int threadsPerBlock = BS;
-	int numOfBlocks = nodeSize / threadsPerBlock + (nodeSize % threadsPerBlock == 0 ? 0 : 1);
+	int nodesPerThread = nodeSize / numOfThreads;
+	int nodesPerThreadLeftovers = nodeSize%numOfThreads;
+	int extrasO = nodesPerThread + nodesPerThreadLeftovers;
+	int numOfBlocks = (extrasO == 0 ? 0 : 1);
 
 	computeDeltaUKernel << <  numOfBlocks, threadsPerBlock >> >(d_edgeIndex, d_edges, d_costs, d_deltas, d_numOfThreads);
 
@@ -2159,13 +2175,14 @@ printf("IN MAIN");
 __global__ void prescan(float *g_odata, float *g_idata, int *n)
 {
 
-
-	int thid = threadIdx.x;
 	int offset = 1;
+	int thid = threadIdx.x;
+	int thidDub = thid *2;
+	int oddThid = thidDub + offset;
 
 	extern __shared__ float temp[];  // allocated on invocation
-	temp[2 * thid] = g_idata[2 * thid]; // load input into shared memory  
-	temp[2 * thid + 1] = g_idata[2 * thid + 1];
+	temp[thidDub] = g_idata[thidDub]; // load input into shared memory  
+	temp[oddThid] = g_idata[oddThid];
 
 	for (int d = *n >> 1; d > 0; d >>= 1)                    // build sum in place up the tree  
 	{
@@ -2173,8 +2190,8 @@ __global__ void prescan(float *g_odata, float *g_idata, int *n)
 		__syncthreads();
 		if (thid < d)
 		{
-			int ai = offset*(2 * thid + 1) - 1;
-			int bi = offset*(2 * thid + 2) - 1;
+			int ai = (oddThid) - 1;			//eliminated multiplying by 1
+			int bi = (oddThid + 1);			//eliminated -1; I think it will be ok since its still greater than 1 from ai
 
 			temp[bi] += temp[ai];
 		}
@@ -2190,8 +2207,8 @@ __global__ void prescan(float *g_odata, float *g_idata, int *n)
 		if (thid < d1)
 		{
 
-			int ai = offset*(2 * thid + 1) - 1;
-			int bi = offset*(2 * thid + 2) - 1;
+			int ai = (oddThid) - 1;
+			int bi = (oddThid + 1);
 
 			float t = temp[ai];
 
@@ -2204,8 +2221,8 @@ __global__ void prescan(float *g_odata, float *g_idata, int *n)
 	__syncthreads();
 
 
-	g_odata[2 * thid] = temp[2 * thid]; // write results to device memory  
-	g_odata[2 * thid + 1] = temp[2 * thid + 1];
+	g_odata[thidDub] = temp[thidDub]; // write results to device memory  
+	g_odata[oddThid] = temp[oddThid];
 
 
 
@@ -2216,7 +2233,7 @@ int makeItPowerOf2(int size){
 
 	int powerOfTwo = 1;
 
-	while (size > powerOfTwo){
+	while (size >= powerOfTwo){
 		powerOfTwo *= 2;
 	}
 
