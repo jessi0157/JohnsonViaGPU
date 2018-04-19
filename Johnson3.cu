@@ -2207,8 +2207,8 @@ __global__ void prescan(float *g_odata, float *g_idata, int *n)
 		if (thid < d1)
 		{
 
-			int ai = (oddThid) - 1;
-			int bi = (oddThid + 1);
+			int ai = offset*(oddThid + 1) - 1;
+			int bi = offset*(oddThid + 2) - 1;
 
 			float t = temp[ai];
 
