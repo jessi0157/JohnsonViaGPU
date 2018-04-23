@@ -827,7 +827,7 @@ __global__ void minimumKernel(int *edgeIndex, int *edges, int * costs, int* delt
 		if (tid < s)
 		{
 			//printf("amca : %d\n", blockDim.x);
-			if (s_data[tid] > s_data[tid + s])
+			if (s_data[tid] > s_data[tidplusS])
 			{
 				s_data[tid] = s_data[tidPlusS];//<---------------------------------------------------
 			}
